@@ -24,15 +24,15 @@ echo "Beware LLM-written flavor-text" | glitchlings -g mim1c
 
 ```text
    Typogre — scope: Character, order: early
-Scannequin — scope: Character, order: late
+Scannequin — scope: Document, order: late
 ```
 
 ## Help overview
 
 ```text
 usage: glitchlings [-h] [-g SPEC] [-s SEED] [-i INPUT_FILE] [-o OUTPUT_FILE]
-                   [--sample] [--diff] [--list] [-c CONFIG] [--attack]
-                   [--report] [-f {json,yaml,yml}] [-t TOKENIZER]
+                   [--sample] [--diff] [--list] [--plan] [-c CONFIG]
+                   [--attack] [--report] [-f {json,yaml,yml}] [-t TOKENIZER]
                    [text ...]
 
 Summon glitchlings to corrupt text. Provide input text as an argument, via
@@ -60,6 +60,9 @@ options:
   --diff                Show a unified diff between the original and corrupted
                         text.
   --list                List available glitchlings and exit.
+  --plan                Preview the deterministic execution plan (roster
+                        order, derived seeds, pipeline batches and fallback
+                        steps) without reading input or corrupting text.
   -c CONFIG, --config CONFIG
                         Load glitchlings from a YAML configuration file.
   --attack              Output an Attack summary. Includes metrics and counts
@@ -67,8 +70,5 @@ options:
   --report              Output a full Attack report. Includes tokens, token
                         IDs, metrics, and counts.
   -f {json,yaml,yml}, --format {json,yaml,yml}
-                        Output format for --attack or --report (default:
-                        json).
-  -t TOKENIZER, --tokenizer TOKENIZER
 ...
 ```

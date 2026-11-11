@@ -100,6 +100,14 @@ def build_parser(
         help="List available glitchlings and exit.",
     )
     parser.add_argument(
+        "--plan",
+        action="store_true",
+        help=(
+            "Preview the deterministic execution plan (roster order, derived seeds, "
+            "pipeline batches and fallback steps) without reading input or corrupting text."
+        ),
+    )
+    parser.add_argument(
         "-c",
         "--config",
         type=Path,
@@ -121,7 +129,7 @@ def build_parser(
         dest="output_format",
         choices=["json", "yaml", "yml"],
         default="json",
-        help="Output format for --attack or --report (default: json).",
+        help="Output format for --attack, --report, or --plan (default: json).",
     )
     parser.add_argument(
         "-t",
@@ -234,6 +242,71 @@ def summon_glitchlings(
         raise AssertionError("parser.error should exit")
 
 
+def run_plan_mode(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Render the deterministic execution plan without touching input text.
+
+    Plan mode reuses the same roster/config/seed resolution as a real run,
+    but never reads stdin or files as corruption input and never invokes
+    corruption, tokenizers, or metrics.
+
+    Args:
+        args: Parsed CLI arguments.
+        parser: Argument parser used for emitting user-facing errors.
+
+    Returns:
+        int: Exit code for the process (``0`` on success).
+
+    Raises:
+        SystemExit: Raised indirectly via ``parser.error`` on conflicting
+            arguments or roster/configuration problems.
+
+    """
+    if bool(getattr(args, "attack", False)) or bool(getattr(args, "report", False)):
+        parser.error("--plan cannot be combined with --attack or --report.")
+        raise AssertionError("parser.error should exit")
+
+    if bool(getattr(args, "diff", False)):
+        parser.error("--plan cannot be combined with --diff.")
+        raise AssertionError("parser.error should exit")
+
+    if getattr(args, "input_file", None) is not None:
+        parser.error("--plan cannot be combined with --input-file; it never reads input text.")
+        raise AssertionError("parser.error should exit")
+
+    if bool(getattr(args, "sample", False)):
+        parser.error("--plan cannot be combined with --sample; it never reads input text.")
+        raise AssertionError("parser.error should exit")
+
+    if getattr(args, "tokenizer", None):
+        parser.error("--plan cannot be combined with --tokenizer; no tokenization is performed.")
+        raise AssertionError("parser.error should exit")
+
+    text_argument = getattr(args, "text", None)
+    if text_argument:
+        parser.error("--plan does not accept input text; remove the positional argument(s).")
+        raise AssertionError("parser.error should exit")
+
+    output_format = cast(str, args.output_format)
+    normalized_format = "yaml" if output_format == "yml" else output_format
+
+    # Same resolution path as a real run, so config/spec/seed errors match.
+    gaggle = summon_glitchlings(
+        args.glitchlings,
+        parser,
+        args.seed,
+        config_path=args.config,
+    )
+    payload = gaggle.preview_execution_plan()
+
+    if normalized_format == "json":
+        output_content = json.dumps(payload, indent=2)
+    else:
+        output_content = yaml.safe_dump(payload, sort_keys=False)
+
+    _write_output(output_content, cast(Path | None, getattr(args, "output_file", None)))
+    return 0
+
+
 def show_diff(original: str, corrupted: str) -> None:
     """Display a unified diff between the original and corrupted text."""
     diff_lines = list(
@@ -309,6 +382,9 @@ def run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.list:
         list_glitchlings()
         return 0
+
+    if bool(getattr(args, "plan", False)):
+        return run_plan_mode(args, parser)
 
     wants_attack = bool(getattr(args, "attack", False))
     wants_report = bool(getattr(args, "report", False))

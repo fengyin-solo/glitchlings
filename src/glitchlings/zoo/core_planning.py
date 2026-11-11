@@ -380,6 +380,159 @@ def build_execution_plan(
 
 
 # ---------------------------------------------------------------------------
+# Execution Plan Preview (text-free, serialisable)
+# ---------------------------------------------------------------------------
+
+_PIPELINE_EXECUTION = "pipeline"
+_FALLBACK_EXECUTION = "fallback"
+
+
+def _enum_label(value: Any) -> str | None:
+    """Return the lower-cased member name of an enum-like value.
+
+    Plain integers (for example the lightweight mock glitchlings used in
+    unit tests) carry no ``name`` attribute and resolve to ``None``; the
+    companion ``*_value`` field always exposes the raw integer.
+    """
+    name = getattr(value, "name", None)
+    return name.lower() if isinstance(name, str) else None
+
+
+def _build_roster_entry(
+    position: int,
+    source_index: int,
+    glitchling: GlitchlingProtocol,
+    derived_seed: int,
+    *,
+    execution: str,
+    operation_type: str | None,
+    step_index: int,
+) -> dict[str, Any]:
+    """Assemble one serialisable roster entry for the plan preview."""
+    return {
+        "position": position,
+        "source_index": int(source_index),
+        "name": glitchling.name,
+        "scope": _enum_label(glitchling.level),
+        "scope_value": int(glitchling.level),
+        "order": _enum_label(glitchling.order),
+        "order_value": int(glitchling.order),
+        "seed": int(derived_seed),
+        "execution": execution,
+        "operation_type": operation_type,
+        "step": step_index,
+    }
+
+
+def build_plan_preview(
+    apply_order: Sequence[GlitchlingProtocol],
+    orchestration_plan: Sequence[tuple[int, int]],
+    execution_plan: ExecutionPlan,
+    *,
+    master_seed: int,
+) -> dict[str, Any]:
+    """Render a deterministic, JSON/YAML-serialisable execution-plan preview.
+
+    The preview is fully side-effect free: it never invokes corruption,
+    tokenizers, metrics, or IO. It only restates the supplied orchestration
+    metadata and execution plan in a stable, machine-readable shape.
+
+    Args:
+        apply_order: Glitchlings in their final execution order, matching the
+            ordering of ``orchestration_plan`` and the plan steps.
+        orchestration_plan: ``(source_index, derived_seed)`` tuples produced
+            by the orchestration planner.
+        execution_plan: Pipeline/fallback step plan from
+            :func:`build_execution_plan`.
+        master_seed: Master seed used by the enclosing Gaggle.
+
+    Returns:
+        Mapping containing aggregate counters, the ordered roster (with
+        scope, order, derived seed, and pipeline/fallback classification),
+        and the adjacent pipeline batches/fallback steps.
+    """
+    roster: list[dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
+    position = 0
+
+    for step_index, step in enumerate(execution_plan.steps):
+        if step.is_pipeline_step:
+            members: list[str] = []
+            operation_types: list[str | None] = []
+            seeds: list[int] = []
+            for descriptor in step.descriptors:
+                glitchling = apply_order[position]
+                source_index, derived_seed = orchestration_plan[position]
+                operation_type = dict(descriptor["operation"]).get("type")
+                resolved_type = operation_type if isinstance(operation_type, str) else None
+                roster.append(
+                    _build_roster_entry(
+                        position,
+                        source_index,
+                        glitchling,
+                        derived_seed,
+                        execution=_PIPELINE_EXECUTION,
+                        operation_type=resolved_type,
+                        step_index=step_index,
+                    )
+                )
+                members.append(glitchling.name)
+                operation_types.append(resolved_type)
+                seeds.append(int(derived_seed))
+                position += 1
+
+            steps.append(
+                {
+                    "step": step_index,
+                    "execution": _PIPELINE_EXECUTION,
+                    "size": len(step.descriptors),
+                    "members": members,
+                    "operation_types": operation_types,
+                    "seeds": seeds,
+                }
+            )
+            continue
+
+        fallback = step.fallback_glitchling
+        assert fallback is not None, "Fallback execution steps must carry a glitchling"
+        source_index, derived_seed = orchestration_plan[position]
+        roster.append(
+            _build_roster_entry(
+                position,
+                source_index,
+                fallback,
+                derived_seed,
+                execution=_FALLBACK_EXECUTION,
+                operation_type=None,
+                step_index=step_index,
+            )
+        )
+        steps.append(
+            {
+                "step": step_index,
+                "execution": _FALLBACK_EXECUTION,
+                "size": 1,
+                "members": [fallback.name],
+                "operation_types": None,
+                "seeds": [int(derived_seed)],
+            }
+        )
+        position += 1
+
+    return {
+        "mode": "plan",
+        "master_seed": int(master_seed),
+        "roster_count": len(apply_order),
+        "step_count": execution_plan.step_count,
+        "pipeline_step_count": execution_plan.pipeline_step_count,
+        "fallback_step_count": execution_plan.fallback_step_count,
+        "all_pipeline": execution_plan.all_pipeline,
+        "roster": roster,
+        "steps": steps,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Plan Validation Helpers
 # ---------------------------------------------------------------------------
 
@@ -444,6 +597,8 @@ __all__ = [
     "ExecutionStep",
     "ExecutionPlan",
     "build_execution_plan",
+    # Plan preview
+    "build_plan_preview",
     # Validation
     "validate_plan_coverage",
     "extract_plan_ordering",

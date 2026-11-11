@@ -140,6 +140,10 @@ glitchlings --attack --sample
 
 # Emit a full Attack report with tokens, token IDs, and metrics.
 glitchlings --report --sample
+
+# Preview the deterministic execution plan (roster order, seeds, pipeline batches)
+# without supplying any input text.
+glitchlings --plan --format yaml
 ```
 
 ## Configuration Files

@@ -24,6 +24,7 @@ from .core_planning import (
     PipelineOperationPayload,
     build_execution_plan,
     build_pipeline_descriptor,
+    build_plan_preview,
     normalize_plan_entries,
 )
 from .core_planning import (
@@ -456,6 +457,42 @@ class Gaggle(Glitchling):
             raise RuntimeError(message)
 
         self.apply_order = apply_order
+
+    def preview_execution_plan(self) -> dict[str, Any]:
+        """Build a deterministic, text-free preview of the execution plan.
+
+        The preview shares the exact same planning inputs as
+        :meth:`corrupt` — the sorted roster, derived per-glitchling seeds,
+        and the pipeline/fallback batching — but never invokes a corruption
+        function, tokenizer, metric, or text processing. It is intended for
+        tooling (such as the CLI ``--plan`` mode) that needs to inspect what
+        would happen before supplying any text.
+
+        Returns:
+            A JSON/YAML-serialisable mapping describing the roster order,
+            scope, order, derived seeds, pipeline versus fallback steps,
+            adjacent pipeline batches, and aggregate step counts.
+
+        Raises:
+            ValueError: If the gaggle has no master seed, mirroring the
+                error raised during real orchestration.
+        """
+        master_seed = self.seed
+        if master_seed is None:
+            message = "Gaggle orchestration requires a master seed"
+            raise ValueError(message)
+
+        execution_plan = build_execution_plan(
+            self.apply_order,
+            master_seed=master_seed,
+            derive_seed_fn=Gaggle.derive_seed,
+        )
+        return build_plan_preview(
+            self.apply_order,
+            self._plan,
+            execution_plan,
+            master_seed=int(master_seed),
+        )
 
     def _initialize_pipeline_cache(self) -> None:
         self._cached_include_patterns, self._cached_exclude_patterns = (

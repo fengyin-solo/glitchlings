@@ -161,6 +161,9 @@ echo "Some text" | glitchlings -g mim1c
 
 # Get metrics in JSON
 glitchlings --attack --sample
+
+# Preview the execution plan without input text
+glitchlings --plan --format yaml
 ```
 
 Full contract in the [CLI Reference](cli.md).
