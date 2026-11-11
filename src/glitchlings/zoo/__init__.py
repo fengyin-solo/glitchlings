@@ -11,6 +11,7 @@ from .pedant import Pedant, pedant
 from .redactyl import Redactyl, redactyl
 from .rushmore import Rushmore, RushmoreMode, rushmore
 from .scannequin import Scannequin, scannequin
+from .trace import TraceConfig, TraceRecorder
 from .typogre import Typogre, typogre
 from .wherewolf import Wherewolf, wherewolf
 from .zeedub import Zeedub, zeedub
@@ -39,6 +40,8 @@ __all__ = [
     "pedant",
     "Glitchling",
     "Gaggle",
+    "TraceConfig",
+    "TraceRecorder",
     "plan_operations",
     "summon",
     "BUILTIN_GLITCHLINGS",

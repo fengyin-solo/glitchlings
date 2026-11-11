@@ -193,6 +193,17 @@ impl Pipeline {
         })
     }
 
+    /// Run the pipeline one operation at a time and return a text snapshot
+    /// after each operation.
+    ///
+    /// Returns `(snapshots, failure)`. `failure` is `None` on success, or
+    /// `Some((operation_name, error_kind, message))` when an operation fails;
+    /// in that case `snapshots` only contains the successful prefix.
+    #[pyo3(name = "run_staged")]
+    fn run_staged_py(&self, text: &str) -> (Vec<String>, Option<(String, String, String)>) {
+        self.run_staged(text)
+    }
+
     /// Process multiple texts in parallel.
     ///
     /// Releases the GIL and processes all texts concurrently using rayon.

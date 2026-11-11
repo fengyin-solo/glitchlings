@@ -32,7 +32,9 @@ Scannequin — scope: Character, order: late
 ```text
 usage: glitchlings [-h] [-g SPEC] [-s SEED] [-i INPUT_FILE] [-o OUTPUT_FILE]
                    [--sample] [--diff] [--list] [-c CONFIG] [--attack]
-                   [--report] [-f {json,yaml,yml}] [-t TOKENIZER]
+                   [--report] [-f {json,yaml,yml}] [-t TOKENIZER] [--trace]
+                   [--trace-format {json,yaml,yml}]
+                   [--trace-output TRACE_OUTPUT] [--trace-limit TRACE_LIMIT]
                    [text ...]
 
 Summon glitchlings to corrupt text. Provide input text as an argument, via
@@ -68,7 +70,5 @@ options:
                         IDs, metrics, and counts.
   -f {json,yaml,yml}, --format {json,yaml,yml}
                         Output format for --attack or --report (default:
-                        json).
-  -t TOKENIZER, --tokenizer TOKENIZER
 ...
 ```

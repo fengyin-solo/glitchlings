@@ -105,6 +105,49 @@ impl Pipeline {
         Ok(buffer.to_string())
     }
 
+    /// Run the pipeline one operation at a time, snapshotting the buffer
+    /// after every operation so callers can observe per-stage behaviour.
+    ///
+    /// The buffer, RNGs, pattern handling, and operation order are identical
+    /// to [`Pipeline::run`]; the only additional work is the string snapshots
+    /// taken between operations. The final snapshot therefore equals the
+    /// output of `run` on success.
+    ///
+    /// Returns `(snapshots, failure)` where `snapshots` holds one entry per
+    /// successfully applied operation. When an operation fails, `failure` is
+    /// `Some((operation_name, error_kind, message))` and `snapshots` contains
+    /// only the prefix results produced before the failing operation.
+    pub fn run_staged(
+        &self,
+        text: &str,
+    ) -> (Vec<String>, Option<(String, String, String)>) {
+        let mut buffer = TextBuffer::from_owned(
+            text.to_string(),
+            &self.include_only_patterns,
+            &self.exclude_patterns,
+        );
+        let mut snapshots: Vec<String> = Vec::with_capacity(self.descriptors.len());
+
+        for descriptor in &self.descriptors {
+            let mut rng = DeterministicRng::new(descriptor.seed);
+            if let Err(source) = descriptor.operation.apply(&mut buffer, &mut rng) {
+                let kind = match source {
+                    OperationError::Regex(_) => "RuntimeError",
+                    _ => "ValueError",
+                };
+                let failure = (
+                    descriptor.name.clone(),
+                    kind.to_string(),
+                    source.to_string(),
+                );
+                return (snapshots, Some(failure));
+            }
+            snapshots.push(buffer.to_string());
+        }
+
+        (snapshots, None)
+    }
+
     /// Process multiple texts in parallel.
     ///
     /// Each text is processed independently with the same pipeline configuration.
@@ -274,6 +317,93 @@ mod tests {
         // After reduplication: "Guard Guard the the vault vault"
         // After redaction at rate 0.5 with this seed: specific words get redacted
         assert_eq!(output, "█████ █████ the ███ vault vault");
+    }
+
+    #[test]
+    fn run_staged_snapshots_match_run() {
+        let master_seed = 777i128;
+        let descriptors = vec![
+            OperationDescriptor {
+                name: "Rushmore-Duplicate".to_string(),
+                seed: derive_seed(master_seed, "Rushmore-Duplicate", 0),
+                operation: Operation::Reduplicate(ReduplicateWordsOp {
+                    rate: 0.6,
+                    unweighted: false,
+                }),
+            },
+            OperationDescriptor {
+                name: "Redactyl".to_string(),
+                seed: derive_seed(master_seed, "Redactyl", 1),
+                operation: Operation::Redact(RedactWordsOp {
+                    replacement_char: "█".to_string(),
+                    rate: 0.4,
+                    merge_adjacent: false,
+                    unweighted: false,
+                }),
+            },
+        ];
+        let pipeline = Pipeline::new(master_seed, descriptors, Vec::new(), Vec::new());
+        let input = "Guard the vault at midnight";
+
+        let (snapshots, failure) = pipeline.run_staged(input);
+        assert!(failure.is_none());
+        assert_eq!(snapshots.len(), 2);
+
+        let expected = pipeline.run(input).expect("pipeline succeeds");
+        assert_eq!(snapshots.last().expect("final snapshot"), &expected);
+
+        // The first snapshot must reflect only the first operation.
+        let first_only = Pipeline::new(
+            master_seed,
+            vec![OperationDescriptor {
+                name: "Rushmore-Duplicate".to_string(),
+                seed: derive_seed(master_seed, "Rushmore-Duplicate", 0),
+                operation: Operation::Reduplicate(ReduplicateWordsOp {
+                    rate: 0.6,
+                    unweighted: false,
+                }),
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(
+            snapshots[0],
+            first_only.run(input).expect("single op succeeds")
+        );
+    }
+
+    #[test]
+    fn run_staged_reports_failure_with_prefix() {
+        let master_seed = 5i128;
+        let descriptors = vec![
+            OperationDescriptor {
+                name: "Rushmore-Duplicate".to_string(),
+                seed: derive_seed(master_seed, "Rushmore-Duplicate", 0),
+                operation: Operation::Reduplicate(ReduplicateWordsOp {
+                    rate: 1.0,
+                    unweighted: false,
+                }),
+            },
+            OperationDescriptor {
+                name: "Redactyl".to_string(),
+                seed: derive_seed(master_seed, "Redactyl", 1),
+                operation: Operation::Redact(RedactWordsOp {
+                    replacement_char: "█".to_string(),
+                    rate: 1.0,
+                    merge_adjacent: false,
+                    unweighted: false,
+                }),
+            },
+        ];
+        let pipeline = Pipeline::new(master_seed, descriptors, Vec::new(), Vec::new());
+
+        // Whitespace-only input has no redactable words: the second op fails.
+        let (snapshots, failure) = pipeline.run_staged("   ");
+        assert_eq!(snapshots.len(), 1, "only the prefix operation is snapshotted");
+        let (name, kind, message) = failure.expect("failure must be reported");
+        assert_eq!(name, "Redactyl");
+        assert_eq!(kind, "ValueError");
+        assert!(message.contains("redactable"));
     }
 
     #[test]

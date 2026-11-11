@@ -18,7 +18,7 @@ from ..util.transcripts import (
     is_transcript,
     resolve_transcript_indices,
 )
-from .core_execution import execute_plan
+from .core_execution import execute_plan, execute_plan_traced
 from .core_planning import (
     PipelineDescriptor,
     PipelineOperationPayload,
@@ -29,6 +29,7 @@ from .core_planning import (
 from .core_planning import (
     PlanEntry as _PlanEntry,
 )
+from .trace import TraceConfig, TraceRecorder
 
 _DatasetsDataset = get_datasets_dataset()
 
@@ -397,8 +398,28 @@ class Gaggle(Glitchling):
         self._missing_pipeline_glitchlings: list[Glitchling] = []
         self._cached_include_patterns: list[str] = []
         self._cached_exclude_patterns: list[str] = []
+        # Opt-in trace recorder. When attached, _corrupt_text switches to the
+        # observable staged execution path; default behaviour is unchanged.
+        self._trace_recorder: TraceRecorder | None = None
         self.sort_glitchlings()
         self._initialize_pipeline_cache()
+
+    def enable_trace(self, config: TraceConfig | None = None) -> TraceRecorder:
+        """Attach a trace recorder and return it.
+
+        Args:
+            config: Optional validated trace configuration.
+
+        Returns:
+            The recorder collecting stages for subsequent corruption calls.
+        """
+        recorder = TraceRecorder(config, master_seed=self.seed)
+        self._trace_recorder = recorder
+        return recorder
+
+    def disable_trace(self) -> None:
+        """Remove any attached trace recorder, restoring default execution."""
+        self._trace_recorder = None
 
     def clone(self, seed: int | None = None) -> "Gaggle":
         """Create a copy of this gaggle, cloning member glitchlings."""
@@ -522,6 +543,11 @@ class Gaggle(Glitchling):
             message = "Gaggle orchestration requires a master seed"
             raise RuntimeError(message)
 
+        # Opt-in observable execution: one trace stage per glitchling while
+        # preserving the exact plans, RNGs, and final output of a normal run.
+        if self._trace_recorder is not None:
+            return self._corrupt_text_traced(text, master_seed)
+
         # Check for heterogeneous masks requiring per-group execution
         if self._has_heterogeneous_masks():
             return self._corrupt_text_heterogeneous(text, master_seed)
@@ -576,6 +602,74 @@ class Gaggle(Glitchling):
                 result,
                 plan,
                 master_seed,
+                include_only_patterns=include_patterns or [],
+                exclude_patterns=exclude_patterns or [],
+            )
+
+        return result
+
+    def _corrupt_text_traced(self, text: str, master_seed: int) -> str:
+        """Trace counterpart of :meth:`_corrupt_text` with observable stages.
+
+        The plan construction and mask handling mirror the non-traced paths
+        exactly; only the execution dispatch changes so each glitchling
+        produces its own trace record.
+        """
+        recorder = self._trace_recorder
+        if recorder is None:  # pragma: no cover - guarded by caller
+            return self._corrupt_text(text)
+
+        if self._has_heterogeneous_masks():
+            return self._corrupt_text_traced_heterogeneous(text, master_seed)
+
+        self._ensure_pipeline_ready()
+        plan = build_execution_plan(
+            self.apply_order,
+            master_seed=master_seed,
+            derive_seed_fn=Gaggle.derive_seed,
+        )
+        cached_pipeline = (
+            self._pipeline
+            if self._pipeline is not None and not self._missing_pipeline_glitchlings
+            else None
+        )
+        return execute_plan_traced(
+            text,
+            plan,
+            self.apply_order,
+            master_seed,
+            recorder,
+            include_only_patterns=self._cached_include_patterns,
+            exclude_patterns=self._cached_exclude_patterns,
+            pipeline=cached_pipeline,
+        )
+
+    def _corrupt_text_traced_heterogeneous(self, text: str, master_seed: int) -> str:
+        """Trace counterpart of :meth:`_corrupt_text_heterogeneous`.
+
+        Mask groups and plans are identical to the non-traced path; each
+        group streams its stages into the shared recorder so the global
+        ordering stays intact.
+        """
+        recorder = self._trace_recorder
+        if recorder is None:  # pragma: no cover - guarded by caller
+            return self._corrupt_text_heterogeneous(text, master_seed)
+
+        groups = self._group_by_masks()
+        result = text
+
+        for include_patterns, exclude_patterns, glitchlings in groups:
+            plan = build_execution_plan(
+                glitchlings,
+                master_seed=master_seed,
+                derive_seed_fn=Gaggle.derive_seed,
+            )
+            result = execute_plan_traced(
+                result,
+                plan,
+                glitchlings,
+                master_seed,
+                recorder,
                 include_only_patterns=include_patterns or [],
                 exclude_patterns=exclude_patterns or [],
             )

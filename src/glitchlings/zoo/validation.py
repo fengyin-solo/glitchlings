@@ -24,6 +24,8 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, TypeVar, cast
 
+from ..constants import MAX_TRACE_PREVIEW_LIMIT, TRACE_FORMAT_JSON, TRACE_FORMAT_YAML
+
 # ---------------------------------------------------------------------------
 # Rate Validation (universal)
 # ---------------------------------------------------------------------------
@@ -609,11 +611,64 @@ def normalize_string_collection(
     return tuple(value)
 
 
+# ---------------------------------------------------------------------------
+# Trace Validation
+# ---------------------------------------------------------------------------
+
+
+def validate_trace_preview_limit(value: object) -> int:
+    """Validate a trace preview limit against the server-side hard cap.
+
+    Args:
+        value: User-provided preview limit in characters. Booleans are
+            rejected even though ``bool`` is a subclass of ``int``.
+
+    Returns:
+        The validated non-negative limit.
+
+    Raises:
+        TypeError: If ``value`` is not an integer.
+        ValueError: If ``value`` is negative or exceeds the hard cap.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("trace preview limit must be an integer number of characters")
+    if value < 0:
+        raise ValueError(f"trace preview limit must be non-negative, got {value}")
+    if value > MAX_TRACE_PREVIEW_LIMIT:
+        raise ValueError(
+            f"trace preview limit must not exceed {MAX_TRACE_PREVIEW_LIMIT} characters, got {value}"
+        )
+    return value
+
+
+def normalize_trace_format(value: object) -> str:
+    """Normalize a trace output format to a canonical name.
+
+    Args:
+        value: User-provided format ("json", "yaml", or the "yml" alias).
+
+    Returns:
+        The canonical format name ("json" or "yaml").
+
+    Raises:
+        ValueError: If the format is not supported.
+    """
+    normalized = str(value).strip().lower()
+    if normalized == "yml":
+        normalized = TRACE_FORMAT_YAML
+    if normalized not in {TRACE_FORMAT_JSON, TRACE_FORMAT_YAML}:
+        raise ValueError(f"unsupported trace format '{value}'. Expected 'json' or 'yaml'.")
+    return normalized
+
+
 __all__ = [
     # Rate validation
     "clamp_rate",
     "clamp_rate_unit",
     "resolve_rate",
+    # Trace validation
+    "validate_trace_preview_limit",
+    "normalize_trace_format",
     # Mim1c
     "normalise_mim1c_classes",
     "normalise_mim1c_banned",

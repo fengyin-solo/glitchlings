@@ -28,6 +28,8 @@ from .zoo import (
     Rushmore,
     RushmoreMode,
     Scannequin,
+    TraceConfig,
+    TraceRecorder,
     Typogre,
     Wherewolf,
     Zeedub,
@@ -91,6 +93,8 @@ __all__ = [
     "summon",
     "Glitchling",
     "Gaggle",
+    "TraceConfig",
+    "TraceRecorder",
     "plan_operations",
     # Utilities
     "SAMPLE_TEXT",

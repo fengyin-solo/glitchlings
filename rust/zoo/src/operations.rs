@@ -42,22 +42,34 @@ pub enum OperationError {
     InvalidRate(f64),
 }
 
-impl OperationError {
-    #[must_use] 
-    pub fn into_pyerr(self) -> PyErr {
+impl std::fmt::Display for OperationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Buffer(err) => PyValueError::new_err(err.to_string()),
-            Self::NoRedactableWords => PyValueError::new_err(
-                "Cannot redact words because the input text contains no redactable words.",
+            Self::Buffer(err) => write!(f, "{err}"),
+            Self::NoRedactableWords => write!(
+                f,
+                "Cannot redact words because the input text contains no redactable words."
             ),
             Self::ExcessiveRedaction { .. } => {
-                PyValueError::new_err("Cannot redact more words than available in text")
+                write!(f, "Cannot redact more words than available in text")
             }
-            Self::Rng(err) => PyValueError::new_err(err.to_string()),
-            Self::Regex(message) => PyRuntimeError::new_err(message),
+            Self::Rng(err) => write!(f, "{err}"),
+            Self::Regex(message) => write!(f, "{message}"),
             Self::InvalidRate(rate) => {
-                PyValueError::new_err(format!("rate must be a finite number, got {rate}"))
+                write!(f, "rate must be a finite number, got {rate}")
             }
+        }
+    }
+}
+
+impl std::error::Error for OperationError {}
+
+impl OperationError {
+    #[must_use]
+    pub fn into_pyerr(self) -> PyErr {
+        match &self {
+            Self::Regex(_) => PyRuntimeError::new_err(self.to_string()),
+            _ => PyValueError::new_err(self.to_string()),
         }
     }
 }

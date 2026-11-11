@@ -37,6 +37,7 @@ __all__ = [
     # Orchestration operations
     "plan_operations_rust",
     "compose_operations_rust",
+    "compose_operations_staged_rust",
     "build_pipeline_rust",
     "RustPipeline",
     # Character-level operations
@@ -98,6 +99,22 @@ class RustPipeline:
 
     def run(self, text: str) -> str:
         return cast(str, self._pipeline.run(text))
+
+    def run_staged(self, text: str) -> tuple[list[str], tuple[str, str, str] | None]:
+        """Run the pipeline with per-operation text snapshots.
+
+        Returns:
+            A ``(snapshots, failure)`` tuple. ``snapshots`` contains one
+            string per successfully applied operation. ``failure`` is either
+            ``None`` or ``(operation_name, error_kind, message)`` describing
+            the first failing operation; in that case ``snapshots`` only
+            holds the successful prefix.
+        """
+        result = cast(
+            tuple[list[str], tuple[str, str, str] | None],
+            self._pipeline.run_staged(text),
+        )
+        return result
 
     def run_batch(self, texts: Sequence[str]) -> list[str]:
         """Process multiple texts in parallel.
@@ -180,6 +197,35 @@ def build_pipeline_rust(
         include_only_patterns=include_only_patterns,
         exclude_patterns=exclude_patterns,
     )
+
+
+def compose_operations_staged_rust(
+    text: str,
+    descriptors: Sequence[PipelineDescriptor],
+    master_seed: int,
+    *,
+    include_only_patterns: Sequence[str] | None = None,
+    exclude_patterns: Sequence[str] | None = None,
+) -> tuple[list[str], tuple[str, str, str] | None]:
+    """Execute operations through Rust with a snapshot after each operation.
+
+    Args:
+        text: Input text to transform.
+        descriptors: Pipeline descriptors for each operation.
+        master_seed: Master seed for determinism.
+        include_only_patterns: Regex patterns limiting mutations to matching spans.
+        exclude_patterns: Regex patterns that should not be modified.
+
+    Returns:
+        A ``(snapshots, failure)`` tuple; see :meth:`RustPipeline.run_staged`.
+    """
+    pipeline = RustPipeline(
+        descriptors,
+        int(master_seed),
+        include_only_patterns=include_only_patterns,
+        exclude_patterns=exclude_patterns,
+    )
+    return pipeline.run_staged(text)
 
 
 # ---------------------------------------------------------------------------

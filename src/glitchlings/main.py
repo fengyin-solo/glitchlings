@@ -21,9 +21,12 @@ from .zoo import (
     DEFAULT_GLITCHLING_NAMES,
     Gaggle,
     Glitchling,
+    TraceConfig,
+    TraceRecorder,
     parse_glitchling_spec,
     summon,
 )
+from .zoo.validation import normalize_trace_format
 
 MAX_NAME_WIDTH = max(len(glitchling.name) for glitchling in BUILTIN_GLITCHLINGS.values())
 
@@ -131,6 +134,38 @@ def build_parser(
             "Tokenizer to use for --attack or --report. "
             "Checks tiktoken first, then HuggingFace tokenizers library. "
             "Examples: cl100k_base, gpt-4, bert-base-uncased."
+        ),
+    )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help=(
+            "Record one observable trace stage per glitchling, including seed, "
+            "execution path, lengths, hashes, changed characters, and previews."
+        ),
+    )
+    parser.add_argument(
+        "--trace-format",
+        dest="trace_format",
+        choices=["json", "yaml", "yml"],
+        default=None,
+        help="Trace output format (default: json). Requires --trace.",
+    )
+    parser.add_argument(
+        "--trace-output",
+        dest="trace_output",
+        type=Path,
+        default=None,
+        help="Write the trace to this file instead of stdout. Requires --trace.",
+    )
+    parser.add_argument(
+        "--trace-limit",
+        dest="trace_limit",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of characters kept in each trace preview. Must be "
+            "non-negative and within the server-side hard cap. Requires --trace."
         ),
     )
 
@@ -295,6 +330,15 @@ def _write_output(content: str, output_file: Path | None) -> None:
         print(content, end="" if content.endswith("\n") else "\n")
 
 
+def _emit_trace(recorder: TraceRecorder, trace_format: str, trace_output: Path | None) -> None:
+    """Serialize and write the trace document to a file or stdout."""
+    rendered = recorder.render(trace_format)
+    if trace_output is not None:
+        trace_output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        print(rendered)
+
+
 def run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Execute the CLI workflow using the provided arguments.
 
@@ -345,6 +389,42 @@ def run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         parser.error("--tokenizer requires --attack or --report.")
         raise AssertionError("parser.error should exit")
 
+    # Validate trace options before any execution begins
+    wants_trace = bool(getattr(args, "trace", False))
+    trace_format = cast(str | None, getattr(args, "trace_format", None))
+    trace_output = cast(Path | None, getattr(args, "trace_output", None))
+    trace_limit = cast(int | None, getattr(args, "trace_limit", None))
+
+    trace_options_present = (
+        trace_format is not None or trace_output is not None or trace_limit is not None
+    )
+    if not wants_trace and trace_options_present:
+        parser.error("--trace-format, --trace-output and --trace-limit require --trace.")
+        raise AssertionError("parser.error should exit")
+
+    if wants_trace:
+        if wants_metrics:
+            parser.error("--trace cannot be combined with --attack or --report.")
+            raise AssertionError("parser.error should exit")
+        if args.diff:
+            parser.error("--trace cannot be combined with --diff.")
+            raise AssertionError("parser.error should exit")
+        if output_file is not None and trace_output is not None and trace_output == output_file:
+            parser.error("--trace-output must differ from --output-file.")
+            raise AssertionError("parser.error should exit")
+        default_limit = TraceConfig().preview_limit
+        try:
+            trace_config = TraceConfig(
+                preview_limit=trace_limit if trace_limit is not None else default_limit
+            )
+            normalized_trace_format = normalize_trace_format(trace_format or "json")
+        except (TypeError, ValueError) as exc:
+            parser.error(str(exc))
+            raise AssertionError("parser.error should exit")
+    else:
+        trace_config = None
+        normalized_trace_format = "json"
+
     text = read_text(args, parser)
     gaggle = summon_glitchlings(
         args.glitchlings,
@@ -389,7 +469,16 @@ def run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         _write_output(output_content, output_file)
         return 0
 
-    corrupted = gaggle.corrupt(text)
+    recorder = gaggle.enable_trace(trace_config) if wants_trace else None
+
+    try:
+        corrupted = gaggle.corrupt(text)
+    except Exception:
+        # Emit the partial trace (failed stage + prefix results), then
+        # propagate the original exception instead of swallowing it.
+        if recorder is not None:
+            _emit_trace(recorder, normalized_trace_format, trace_output)
+        raise
     if not isinstance(corrupted, str):
         message = "Gaggle returned non-string output for string input"
         raise TypeError(message)
@@ -398,6 +487,9 @@ def run_cli(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         show_diff(text, corrupted)
     else:
         _write_output(corrupted, output_file)
+
+    if recorder is not None:
+        _emit_trace(recorder, normalized_trace_format, trace_output)
 
     return 0
 
